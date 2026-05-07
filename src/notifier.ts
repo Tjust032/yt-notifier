@@ -1,8 +1,10 @@
-import axios from 'axios';
-import nodemailer from 'nodemailer';
-import fs from 'fs/promises';
+import axios from "axios";
+import nodemailer from "nodemailer";
+import fs from "fs/promises";
+import dotenv from "dotenv";
 
-const STATE_FILE = './state.json';
+dotenv.config();
+const STATE_FILE = "./state.json";
 
 interface LiveCheckResult {
   isLive: boolean;
@@ -18,7 +20,7 @@ interface State {
 
 async function loadState(): Promise<State> {
   try {
-    const raw = await fs.readFile(STATE_FILE, 'utf-8');
+    const raw = await fs.readFile(STATE_FILE, "utf-8");
     return JSON.parse(raw);
   } catch {
     return { notified: {} };
@@ -29,16 +31,22 @@ async function saveState(state: State): Promise<void> {
   await fs.writeFile(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
-async function checkChannelLive(channelId: string, apiKey: string): Promise<LiveCheckResult> {
-  const { data } = await axios.get('https://www.googleapis.com/youtube/v3/search', {
-    params: {
-      part: 'snippet',
-      channelId,
-      eventType: 'live',
-      type: 'video',
-      key: apiKey,
+async function checkChannelLive(
+  channelId: string,
+  apiKey: string,
+): Promise<LiveCheckResult> {
+  const { data } = await axios.get(
+    "https://www.googleapis.com/youtube/v3/search",
+    {
+      params: {
+        part: "snippet",
+        channelId,
+        eventType: "live",
+        type: "video",
+        key: apiKey,
+      },
     },
-  });
+  );
 
   if (data.items && data.items.length > 0) {
     const item = data.items[0];
@@ -55,7 +63,7 @@ async function checkChannelLive(channelId: string, apiKey: string): Promise<Live
 
 async function sendEmail(result: LiveCheckResult): Promise<void> {
   const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    service: "gmail",
     auth: {
       user: process.env.GMAIL_USER!,
       pass: process.env.GMAIL_APP_PASSWORD!,
@@ -76,7 +84,9 @@ async function sendEmail(result: LiveCheckResult): Promise<void> {
       <p><a href="${videoUrl}">Watch now</a></p>
     `,
   });
-  console.log(`Sent notification for ${result.channelTitle} — ${result.videoId}`);
+  console.log(
+    `Sent notification for ${result.channelTitle} — ${result.videoId}`,
+  );
 }
 
 async function main(): Promise<void> {
@@ -84,11 +94,14 @@ async function main(): Promise<void> {
   const channelIdsRaw = process.env.CHANNEL_IDS;
 
   if (!apiKey || !channelIdsRaw) {
-    console.error('Missing required env vars: YOUTUBE_API_KEY and CHANNEL_IDS');
+    console.error("Missing required env vars: YOUTUBE_API_KEY and CHANNEL_IDS");
     process.exit(1);
   }
 
-  const channelIds = channelIdsRaw.split(',').map(s => s.trim()).filter(Boolean);
+  const channelIds = channelIdsRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const state = await loadState();
   let stateChanged = false;
 
@@ -105,21 +118,25 @@ async function main(): Promise<void> {
         delete state.notified[channelId];
         stateChanged = true;
       } else {
-        console.log(`${channelId}: ${result.isLive ? 'live (already notified)' : 'not live'}`);
+        console.log(
+          `${channelId}: ${result.isLive ? "live (already notified)" : "not live"}`,
+        );
       }
     } catch (err: unknown) {
-      const msg = axios.isAxiosError(err) ? JSON.stringify(err.response?.data) : String(err);
+      const msg = axios.isAxiosError(err)
+        ? JSON.stringify(err.response?.data)
+        : String(err);
       console.error(`Error checking ${channelId}: ${msg}`);
     }
   }
 
   if (stateChanged) {
     await saveState(state);
-    console.log('State saved.');
+    console.log("State saved.");
   }
 }
 
-main().catch(err => {
-  console.error('Fatal:', err);
+main().catch((err) => {
+  console.error("Fatal:", err);
   process.exit(1);
 });
