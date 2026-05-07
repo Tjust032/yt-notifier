@@ -1,0 +1,53 @@
+name: Check YouTube Live
+
+on:
+  schedule:
+    # Every 15 minutes. 96 calls/day x 100 quota units = 9,600 units (fits within the 10,000/day free tier for 1 channel).
+    # Add more channels? Increase this interval proportionally, or request a quota raise in Google Cloud Console.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Prevent concurrent runs from racing on state.json
+concurrency:
+  group: yt-notifier
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run notifier
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          CHANNEL_IDS: ${{ secrets.CHANNEL_IDS }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+        run: npm start
+
+      - name: Commit updated state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [[ -n $(git status --porcelain state.json) ]]; then
+            git add state.json
+            git commit -m "chore: update notifier state [skip ci]"
+            git push
+          else
+            echo "No state changes."
+          fi
