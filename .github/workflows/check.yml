@@ -4,10 +4,18 @@ on:
   schedule:
     - cron: "*/10 * * * *"
   workflow_dispatch:
+    inputs:
+      channel:
+        description: "YouTube handle to check (for testing)"
+        default: "@Zwag"
 
 concurrency:
   group: live-check
   cancel-in-progress: false
+
+env:
+  # Scheduled runs have no inputs, so they fall back to @Zwag.
+  CHANNEL: ${{ inputs.channel || '@Zwag' }}
 
 jobs:
   check:
@@ -19,7 +27,7 @@ jobs:
       - name: Check live status
         id: live
         run: |
-          if VIDEO_ID=$(python3 check_live.py "@Zwag"); then
+          if VIDEO_ID=$(python3 check_live.py "$CHANNEL"); then
             echo "Live: $VIDEO_ID"
             echo "video_id=$VIDEO_ID" >> "$GITHUB_OUTPUT"
           else
@@ -44,12 +52,13 @@ jobs:
         run: |
           if [ -z "$NTFY_TOPIC" ]; then echo "NTFY_TOPIC secret is not set"; exit 1; fi
           URL="https://www.youtube.com/watch?v=$VIDEO_ID"
+          NAME="${CHANNEL#@}"
           curl -fsS \
-            -H "Title: Zwag is LIVE on YouTube" \
+            -H "Title: $NAME is LIVE on YouTube" \
             -H "Tags: red_circle" \
             -H "Priority: high" \
             -H "Click: $URL" \
-            -d "Zwag just went live: $URL" \
+            -d "$NAME just went live: $URL" \
             "https://ntfy.sh/$NTFY_TOPIC"
           echo "$VIDEO_ID" > notified.txt
 
