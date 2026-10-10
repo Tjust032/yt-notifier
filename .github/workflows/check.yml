@@ -1,0 +1,61 @@
+name: Check if Zwag is live
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: live-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check live status
+        id: live
+        run: |
+          if VIDEO_ID=$(python3 check_live.py "@Zwag"); then
+            echo "Live: $VIDEO_ID"
+            echo "video_id=$VIDEO_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not live."
+          fi
+
+      # One cache entry per stream, so each stream notifies only once.
+      - name: Check if already notified
+        if: steps.live.outputs.video_id != ''
+        id: seen
+        uses: actions/cache/restore@v4
+        with:
+          path: notified.txt
+          key: notified-${{ steps.live.outputs.video_id }}
+          lookup-only: true
+
+      - name: Send ntfy notification
+        if: steps.live.outputs.video_id != '' && steps.seen.outputs.cache-hit != 'true'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          VIDEO_ID: ${{ steps.live.outputs.video_id }}
+        run: |
+          if [ -z "$NTFY_TOPIC" ]; then echo "NTFY_TOPIC secret is not set"; exit 1; fi
+          URL="https://www.youtube.com/watch?v=$VIDEO_ID"
+          curl -fsS \
+            -H "Title: Zwag is LIVE on YouTube" \
+            -H "Tags: red_circle" \
+            -H "Priority: high" \
+            -H "Click: $URL" \
+            -d "Zwag just went live: $URL" \
+            "https://ntfy.sh/$NTFY_TOPIC"
+          echo "$VIDEO_ID" > notified.txt
+
+      - name: Remember this stream
+        if: steps.live.outputs.video_id != '' && steps.seen.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: notified.txt
+          key: notified-${{ steps.live.outputs.video_id }}
