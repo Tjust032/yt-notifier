@@ -47,6 +47,24 @@ if __name__ == "__main__":
     html = fetch(f"https://www.youtube.com/{CHANNEL}/live")
     title = re.search(r"<title>(.*?)</title>", html, re.S)
     log(f"Fetched {len(html)} bytes; page title: {title.group(1).strip() if title else 'none'!r}")
+    # TEMP diagnostics: which live signals does this page contain?
+    for pat in [
+        r'"videoDetails":\{"videoId":"([\w-]{11})"',
+        r'"isLiveNow":(true|false)',
+        r'"isLive":(true|false)',
+        r'"isLiveContent":(true|false)',
+        r'"isUpcoming":(true|false)',
+        r'<meta property="og:url" content="([^"]+)"',
+        r'<meta itemprop="identifier" content="([^"]+)"',
+        r'"canonicalBaseUrl":"([^"]+)"',
+        r'/watch\?v=([\w-]{11})',
+        r'"style":"LIVE"',
+        r'"text":"LIVE"',
+        r'ytInitialPlayerResponse',
+        r'"playabilityStatus":\{"status":"(\w+)"',
+    ]:
+        hits = re.findall(pat, html)
+        log(f"  {pat!r}: {len(hits)} hit(s) {list(dict.fromkeys(hits))[:5]}")
     vid = live_video_id(html)
     if vid:
         print(vid)
