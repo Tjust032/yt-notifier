@@ -1,41 +1,20 @@
-"""Check whether a YouTube channel is live right now.
+"""Check whether a YouTube channel is live right now, using the YouTube Data API.
 
 Prints the live video ID to stdout and exits 0 when live; exits 1 when not live.
+Exits 2 on errors (bad API key, unknown channel, network), so the workflow fails loudly.
+
+Costs 3 quota units per run (channels.list + playlistItems.list + videos.list),
+about 430/day at a 10-minute interval. The free quota is 10,000/day.
 """
-import re
+import json
+import os
 import sys
+import urllib.error
+import urllib.parse
 import urllib.request
 
 CHANNEL = sys.argv[1] if len(sys.argv) > 1 else "@Zwag"
-
-
-def fetch(url: str) -> str:
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-            # Skip the EU cookie consent interstitial.
-            "Cookie": "CONSENT=YES+1; SOCS=CAI",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.read().decode("utf-8", errors="replace")
-
-
-def live_video_id(html: str) -> str | None:
-    # When a channel is live (or has a scheduled stream), /live redirects to a watch page.
-    m = re.search(r'<link rel="canonical" href="https://www\.youtube\.com/watch\?v=([\w-]{11})"', html)
-    if not m:
-        canon = re.search(r'<link rel="canonical" href="([^"]+)"', html)
-        log(f"No watch-page canonical link (canonical: {canon.group(1) if canon else 'none'}).")
-        return None
-    # Exclude scheduled/upcoming streams: only count it if it's actually live now.
-    if '"isLiveNow":true' not in html and '"isLive":true' not in html:
-        log(f"Watch page {m.group(1)} found, but it isn't marked live now (likely scheduled).")
-        return None
-    return m.group(1)
+API = "https://www.googleapis.com/youtube/v3"
 
 
 def log(msg: str) -> None:
@@ -43,29 +22,49 @@ def log(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
+def api(endpoint: str, **params: str) -> dict:
+    params["key"] = os.environ["YOUTUBE_API_KEY"]
+    url = f"{API}/{endpoint}?{urllib.parse.urlencode(params)}"
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as e:
+        # Don't include the URL: it contains the API key.
+        raise RuntimeError(f"{endpoint} failed: HTTP {e.code} {e.read().decode(errors='replace')}") from None
+
+
+def live_video_id(handle: str) -> str | None:
+    channels = api("channels", part="snippet,contentDetails", forHandle=handle).get("items", [])
+    if not channels:
+        raise RuntimeError(f"No channel found for {handle}")
+    channel = channels[0]
+    uploads = channel["contentDetails"]["relatedPlaylists"]["uploads"]
+    log(f"Channel: {channel['snippet']['title']} ({channel['id']})")
+
+    # Live streams show up in the uploads playlist once they're scheduled or started.
+    items = api("playlistItems", part="contentDetails", playlistId=uploads, maxResults="50").get("items", [])
+    ids = [i["contentDetails"]["videoId"] for i in items]
+    if not ids:
+        log("No uploads.")
+        return None
+
+    videos = api("videos", part="snippet", id=",".join(ids)).get("items", [])
+    # liveBroadcastContent is "live" only while streaming; scheduled streams are "upcoming".
+    live = [v["id"] for v in videos if v["snippet"].get("liveBroadcastContent") == "live"]
+    upcoming = [v["id"] for v in videos if v["snippet"].get("liveBroadcastContent") == "upcoming"]
+    log(f"Checked {len(ids)} recent videos: live={live} upcoming={upcoming}")
+    return live[0] if live else None
+
+
 if __name__ == "__main__":
-    html = fetch(f"https://www.youtube.com/{CHANNEL}/live")
-    title = re.search(r"<title>(.*?)</title>", html, re.S)
-    log(f"Fetched {len(html)} bytes; page title: {title.group(1).strip() if title else 'none'!r}")
-    # TEMP diagnostics: which live signals does this page contain?
-    for pat in [
-        r'"videoDetails":\{"videoId":"([\w-]{11})"',
-        r'"isLiveNow":(true|false)',
-        r'"isLive":(true|false)',
-        r'"isLiveContent":(true|false)',
-        r'"isUpcoming":(true|false)',
-        r'<meta property="og:url" content="([^"]+)"',
-        r'<meta itemprop="identifier" content="([^"]+)"',
-        r'"canonicalBaseUrl":"([^"]+)"',
-        r'/watch\?v=([\w-]{11})',
-        r'"style":"LIVE"',
-        r'"text":"LIVE"',
-        r'ytInitialPlayerResponse',
-        r'"playabilityStatus":\{"status":"(\w+)"',
-    ]:
-        hits = re.findall(pat, html)
-        log(f"  {pat!r}: {len(hits)} hit(s) {list(dict.fromkeys(hits))[:5]}")
-    vid = live_video_id(html)
+    if not os.environ.get("YOUTUBE_API_KEY"):
+        log("YOUTUBE_API_KEY is not set")
+        sys.exit(2)
+    try:
+        vid = live_video_id(CHANNEL)
+    except Exception as e:
+        log(f"Error: {e}")
+        sys.exit(2)
     if vid:
         print(vid)
         sys.exit(0)

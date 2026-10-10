@@ -26,12 +26,21 @@ jobs:
 
       - name: Check live status
         id: live
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        # Exit 0 = live, 1 = not live, anything else = error (fails the run).
         run: |
-          if VIDEO_ID=$(python3 check_live.py "$CHANNEL"); then
+          set +e
+          VIDEO_ID=$(python3 check_live.py "$CHANNEL")
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -eq 0 ]; then
             echo "Live: $VIDEO_ID"
             echo "video_id=$VIDEO_ID" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "$STATUS" -eq 1 ]; then
             echo "Not live."
+          else
+            exit "$STATUS"
           fi
 
       # One cache entry per stream, so each stream notifies only once.
